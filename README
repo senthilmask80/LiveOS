@@ -1,0 +1,245 @@
+Let’s build an example Debian 11 Live OS from a fresh Debian 11 VPS with one script.
+
+Start up some root scripting with:
+
+sudo su
+nano in.sh && chmod 755 in.sh
+
+First, let’s setup some aliases to help us get to where we’re going:
+
+#!/bin/bash
+cat >> /root/.bashrc << EOA
+alias opt='cd /root/liveos/config/includes.chroot/opt/;ls -lth'
+alias packages='nano /root/liveos/config/package-lists/main.list.chroot'
+alias run='nano /root/liveos/config/includes.chroot/opt/run.sh'
+alias log='watch -d -n5 "tail -n 36 /root/liveos/build.log"'
+alias build='cd /root/liveos;screen -dmS iso ./build.sh;htop -C || log;ls -lth'
+EOA
+
+So opt is going to be the directory we stash our additions in, packages is going to control the list of debian repository packages we want included in our build, run is going to edit the start-up control script, log lets us watch our 25 minute build session, and build of course builds the live disk ISO. Now, let’s install our prerequisites:
+
+apt update && apt upgrade -y
+apt install -y live-build screen htop net-tools
+
+Now setup a build directory and adjust some defaults. Most would want to change the architecture to amd64. This setup will produce an image of about 600mb.
+
+mkdir -p /root/liveos
+cd /root/liveos
+lb config
+cp /usr/share/doc/live-build/examples/auto/* auto/
+cat > auto/config << EOF
+#!/bin/sh
+set -e
+lb config noauto \
+    -d bullseye \
+    --mode debian \
+    --architectures i386 \
+    --linux-flavours 686-pae \
+    --debian-installer false \
+    --archive-areas "main contrib non-free" \
+    --apt-indices false \
+    --memtest none \
+    --iso-volume "TestOS" \
+    --bootappend-live "quiet hostname=testos boot=live" \
+    "${@}"
+EOF
+lb config -d bullseye --apt-indices false --apt-recommends false --debootstrap-options "--variant=minbase" --firmware-chroot false --memtest none --bootappend-live "quiet boot=live hostname=testos"
+echo "live-tools user-setup sudo eject" > config/package-lists/recommends.list.chroot
+
+Then lets add a list of packages and make that opt directory for additional software.
+
+
+cat > config/package-lists/main.list.chroot << EOF
+firefox-esr
+lxterminal
+net-tools
+wget
+xorg
+openbox
+pcmanfm
+nano
+mousepad
+conky
+feh
+ufw
+screen
+htop
+lsof
+wipe
+usbutils
+gnome-screenshot
+network-manager
+pciutils
+software-properties-common
+ca-certificates
+libfuse2
+EOF
+mkdir -p config/includes.chroot/opt && sync
+cd /root/liveos/config/includes.chroot/opt
+
+
+Adjust as needed of course. The goal here is a minimally viable graphical operating system that is easily expandable. Openbox as a window manager fits the bill here quit nicely. Conky is also very extensible. By setting it up this way we can do all of our configuration on-the-fly at boot time. Let’s add in the real workhorse, run.sh:
+
+cat > run.sh << "EOR"
+#!/bin/bash
+cat > /etc/motd << EOF
+
+████████ ███████ ███████ ████████  ██████  ███████
+   ██    ██      ██         ██    ██    ██ ██
+   ██    █████   ███████    ██    ██    ██ ███████
+   ██    ██           ██    ██    ██    ██      ██
+   ██    ███████ ███████    ██     ██████  ███████
+
+EOF
+cat > /etc/conky/conky.conf << "EOF"
+
+conky.config = {
+    alignment = 'top_right',
+    background = false,
+    border_width = 0,
+    cpu_avg_samples = 2,
+    default_color = 'white',
+    default_outline_color = 'white',
+    default_shade_color = 'white',
+    draw_borders = false,
+    draw_graph_borders = true,
+    draw_outline = false,
+    draw_shades = false,
+    use_xft = true,
+    font = 'DejaVu Sans Mono:size=16',
+    gap_x = 30,
+    gap_y = 20,
+    minimum_height = 5,
+    minimum_width = 6,
+    net_avg_samples = 2,
+    no_buffers = true,
+    out_to_console = false,
+    out_to_stderr = false,
+    extra_newline = false,
+    own_window = true,
+    own_window_class = 'Conky',
+    own_window_colour = 'black',
+    own_window_type = 'desktop',
+    stippled_borders = 0,
+    update_interval = 2,
+    uppercase = false,
+    use_spacer = 'none',
+    show_graph_scale = false,
+    show_graph_range = false
+}
+
+conky.text = [[
+${font Open Sans Light:size=88}$alignc${time %l:%M}${font}
+
+${font Open Sans:size=23}$alignr${time %B %e}${font}
+]]
+EOF
+ln -sf /usr/share/zoneinfo/America/Chicago /etc/localtime
+sed -i '86s/9/14/g' /etc/xdg/openbox/rc.xml
+sed -i '95s/9/14/g' /etc/xdg/openbox/rc.xml
+xsetroot -solid black
+xset s off -dpms
+xhost +si:localuser:root
+conky -b &
+cat > /root/.bashrc << "EOA"
+source /home/user/.bashrc
+EOA
+cat >> /home/user/.bashrc << "EOA"
+alias aliases='sudo nano /home/user/.bashrc; . /home/user/.bashrc'
+alias menu='sudo nano /etc/xdg/openbox/menu.xml; openbox --reconfigure'
+alias pubip='wget --connect-timeout=10 -qO- checkip.dyn.com | grep -E -o "([0-9]{1,3}[\.]){3}[0-9]{1,3}"'
+alias wifi='sudo nmcli dev wifi list; echo "sudo nmcli --ask dev wifi connect [SSID here]"'
+alias crypt='/opt/./truecrypt-console-x86 && truecrypt -c'
+EOA
+chown user:user /home/user/.bashrc
+cat > /home/user/.profile << "EOA"
+source /home/user/.bashrc
+clear
+cat /etc/motd
+EOA
+chown user:user /home/user/.profile
+cat > /etc/xdg/openbox/menu.xml << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+<menu id="root-menu" label="Openbox 3">
+  <separator label="TestOS" />
+   <item label="Terminal">
+	<action name="Execute">
+      <command>lxterminal --geometry=109x45 --title=TestOS</command>
+    </action>
+  </item>
+   <item label="Firefox">
+	<action name="Execute">
+      <command>firefox http://start.duckduckgo.com</command>
+    </action>
+  </item>
+   <item label="Files">
+	<action name="Execute">
+      <command>pcmanfm</command>
+    </action>
+  </item>
+   <item label="Text">
+	<action name="Execute">
+      <command>mousepad</command>
+    </action>
+  </item>
+  <item label="Shutdown">
+    <action name="Execute">
+      <command>sudo shutdown -P --no-wall now</command>
+    </action>
+  </item>
+</menu>
+</openbox_menu>
+EOF
+sed -i '317s/scrot/gnome-screenshot -i/g' /etc/xdg/openbox/rc.xml
+openbox --reconfigure
+ufw enable
+ufw logging low
+echo "nameserver 1.1.1.1" > /etc/resolv.conf
+echo "nameserver 1.0.0.1" >> /etc/resolv.conf
+exit 0
+EOR
+chmod 755 run.sh
+
+
+A live OS with Truecrypt, Veracrypt, or Shufflecake built-in is enough to justify this whole endeavor but really anything can be done once you get used to building for a live environment. The original Truecrypt docs [1] recommend building a live OS and the NSA used Truecrypt [2] back in the day so yea…this is worth it.
+
+wget -q https://raw.githubusercontent.com/DrWhax/truecrypt-archive/master/truecrypt-7.1a-linux-console-x86.tar.gz && tar -xvf *.tar.gz; rm -f truecrypt-7.1a-linux-console-x86.tar.gz
+mv -v truecrypt-7.1a-setup-console-x86 truecrypt-console-x86; chmod 755 truecrypt-console-x86
+cd ..
+chown -Rv user:user opt
+
+We need to hook the live disk boot process to hand off control to Openbox. We’re also changing the default four workspaces to one here as it cleans up the middle-click menu.
+
+cd /root/liveos/
+mkdir -p config/includes.chroot/lib/live/config
+cat > config/includes.chroot/lib/live/config/2000-custom-run << "EOF"
+#!/bin/sh
+sed -i '131s/4/1/g' /etc/xdg/openbox/rc.xml
+echo "sudo /opt/./run.sh" >> /etc/xdg/openbox/autostart
+EOF
+chmod 755 config/includes.chroot/lib/live/config/2000-custom-run
+
+Let’s copy in the default boot loader and setup a tiny build script.
+
+mkdir -p config/bootloaders/isolinux
+cp -Rv /usr/share/live/build/bootloaders/isolinux/* config/bootloaders/isolinux
+
+cat > /root/liveos/build.sh << "EOF"
+#!/bin/bash
+cd /root/liveos
+lb clean
+lb build 2>&1 | tee build.log
+mv -v live-image-i386.hybrid.iso TestOS.iso
+exit 0
+EOF
+chmod 755 /root/liveos/build.sh
+
+That should be it! Run the script, source the aliases, and run the build.
+
+./in.sh
+source .bashrc
+build
+
+This script and setup has been thoroughly tested by myself so I’m confident in sharing this method. I think as a community we should have a better answer to our personal setups then “I use Kali.” F*ck Kali. Try this or literally anything else.
+
